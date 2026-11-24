@@ -67,6 +67,29 @@ def _load_screenings(
     return grouped
 
 
+def load_effective_state(
+    conn: sqlite3.Connection, q_start: int, q_end: int
+) -> tuple[
+    list[iv.GoverningInterval],
+    dict[int, list[tuple[str, int, str]]],
+]:
+    """在 ``[q_start, q_end]`` 序数窗口内加载生效段与相关场次。
+
+    只读取与窗口相交的清单，以及这些生效清单落在窗口内的场次；
+    窗口之外的场次（例如参考段与搜索段之间的无关行）不会被读取。
+    """
+    manifests = _load_manifests(conn, q_start, q_end)
+    segments = iv.governing_intervals(manifests)
+    manifest_ids = sorted({m_id for _, _, _, m_id in segments})
+    screenings_by_manifest = _load_screenings(
+        conn,
+        manifest_ids,
+        date.fromordinal(q_start).isoformat(),
+        date.fromordinal(q_end).isoformat(),
+    )
+    return segments, screenings_by_manifest
+
+
 def get_schedule(
     conn: sqlite3.Connection, query_start: date, query_end: date
 ) -> ScheduleResponse:
@@ -76,17 +99,13 @@ def get_schedule(
     window = (q_start, q_end)
 
     with snapshot(conn):
-        manifests = _load_manifests(conn, q_start, q_end)
-        segments = iv.governing_intervals(manifests)
+        segments, screenings_by_manifest = load_effective_state(
+            conn, q_start, q_end
+        )
 
         # 已覆盖区间（所有生效段的并集）与其补集
         covered = iv.merge_intervals([(s, e) for s, e, _, _ in segments])
         uncovered = iv.subtract_intervals(window, covered)
-
-        manifest_ids = sorted({m_id for _, _, _, m_id in segments})
-        screenings_by_manifest = _load_screenings(
-            conn, manifest_ids, query_start.isoformat(), query_end.isoformat()
-        )
 
         effective: list[ScreeningOut] = []
         confirmed_empty: list[tuple[int, int]] = []

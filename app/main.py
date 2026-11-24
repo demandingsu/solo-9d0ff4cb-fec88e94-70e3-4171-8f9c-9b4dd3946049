@@ -2,6 +2,7 @@
 
 - POST /manifests  录入一份清单（整份接受或整份退回）
 - GET  /schedule   按日期范围查询生效场次与空日期段
+- GET  /reruns     检索与参考段节目相同的等长复映日期段
 - GET  /manifests  查看已入库清单
 - GET  /docs       Swagger UI，可直接录入和查档
 """
@@ -23,10 +24,17 @@ from .database import (
     list_manifests,
 )
 from .repository import get_schedule
+from .reruns import (
+    ReferenceHasNoScreenings,
+    ReferenceNotReported,
+    search_reruns,
+)
 from .schemas import (
+    DateInterval,
     IngestResponse,
     ManifestIn,
     ManifestRecord,
+    RerunSearchResponse,
     ScheduleResponse,
 )
 
@@ -50,7 +58,7 @@ app = FastAPI(
     description=(
         "把乱序到达的放映清单（带整数版次与覆盖起止日期）并入可查档案。"
         "每天以覆盖当日的最高版次为准；同版交叠内容不一致整份退回；"
-        "空日期以区间表达，不逐日展开。"
+        "空日期以区间表达，不逐日展开。另可按参考段检索整套节目的等长复映日期段。"
     ),
 )
 
@@ -120,6 +128,52 @@ def query_schedule(
         )
     # 整个计算在单条快照事务内完成，结果来自同一个已提交状态
     return get_schedule(conn, start_date, end_date)
+
+
+@app.get(
+    "/reruns",
+    response_model=RerunSearchResponse,
+    tags=["档案查询"],
+    summary="检索与参考段节目相同的等长复映日期段",
+    responses={
+        409: {"description": "参考段含未报日期或一场放映都没有，无法检索"},
+    },
+)
+def query_reruns(
+    reference_start: date = Query(..., description="参考段起始日，含当天"),
+    reference_end: date = Query(..., description="参考段截止日，含当天"),
+    search_start: date = Query(..., description="搜索段起始日，含当天"),
+    search_end: date = Query(..., description="搜索段截止日，含当天"),
+    conn: Connection = Depends(get_conn),
+) -> RerunSearchResponse:
+    if reference_end < reference_start:
+        raise HTTPException(status_code=422, detail="reference_end 不能早于 reference_start")
+    if search_end < search_start:
+        raise HTTPException(status_code=422, detail="search_end 不能早于 search_start")
+    try:
+        return search_reruns(
+            conn, reference_start, reference_end, search_start, search_end
+        )
+    except ReferenceNotReported as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "reference_not_fully_reported",
+                "message": str(exc),
+                "uncovered": [
+                    DateInterval(
+                        start_date=date.fromordinal(s),
+                        end_date=date.fromordinal(e),
+                    ).model_dump(mode="json")
+                    for s, e in exc.uncovered
+                ],
+            },
+        )
+    except ReferenceHasNoScreenings as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "reference_has_no_screenings", "message": str(exc)},
+        )
 
 
 @app.get(

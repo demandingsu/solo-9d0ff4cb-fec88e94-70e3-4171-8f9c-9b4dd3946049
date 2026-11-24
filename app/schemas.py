@@ -86,6 +86,24 @@ class ManifestRecord(BaseModel):
     accepted_at: datetime
 
 
+class RerunMatch(BaseModel):
+    """一段与参考段等长、节目相同的复映日期段（含首尾）。"""
+
+    start_date: date
+    end_date: date
+
+
+class RerunSearchResponse(BaseModel):
+    reference_start: date
+    reference_end: date
+    reference_length_days: int = Field(description="参考段长度（含首尾），候选段等长")
+    search_start: date
+    search_end: date
+    matches: list[RerunMatch] = Field(
+        description="搜索段内与参考段节目逐一相同的等长日期段，已排除参考段本身"
+    )
+
+
 class IngestResponse(BaseModel):
     manifest_id: int
     version: int
