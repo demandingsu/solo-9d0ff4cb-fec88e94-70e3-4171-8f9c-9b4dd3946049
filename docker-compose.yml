@@ -1,0 +1,20 @@
+services:
+  archive:
+    build: .
+    image: cinema-archive:latest
+    container_name: cinema-archive
+    ports:
+      - "8000:8000"
+    environment:
+      ARCHIVE_DB_PATH: /data/archive.db
+    volumes:
+      - archive-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  archive-data:
